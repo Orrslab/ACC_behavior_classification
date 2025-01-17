@@ -16,9 +16,9 @@ The second R script (`2 - using_rf_model.Rmd`) allows you then to use the random
 
 > [!NOTE]
 We also provide the code to calculate a confidence score for each behavior classification, i.e., how confident the random forest model is on its prediction.
-
 <br>
-## Get familiar with the Griffon vulture dataset
+
+## Get familiar with the Griffon vulture dataset  
 The example datasets provided, as well as the fully annotated training dataset, were collected from captive and free-roaming griffon vultures in Spain (captive) and Israel (captive and free-roaming).  
 
 The training dataset contains 5783 ACC bouts, matched to six different behavioral classes:
@@ -53,7 +53,7 @@ Start by replacing the files in the folders "ACC_training_data", "Observations_d
 Then, set your custom parameters in section A.i - "Setting parameters and uploading raw ACC and observations data".
 <br>
 
-What parameters do you need to set?  
+What parameters will you need to set?  
 - `bout_type` - there are a few possible scenarios to identify each individual ACC bout:  
   - `bout_type == device` - the device indicates the start of an ACC bout;  
   - `bout_type == time_diff` - the ACC is sampling every X minutes, so you can use the time difference between measurements to identify when a new bout started (you also need to set the `time_threshold`);  
@@ -65,9 +65,10 @@ Then, read the script carefully and run each chunk separately, adjusting the dat
 <br>
 
 > [!TIP]
-> By the end of the first script, you will have created your own random forest model! :champagne:
+> By the end of the first script, you will have created your own random forest model! :tada:
+<br><br><br>
 
-
+# :desktop_computer: Use an existing random forest model
 
 
 
