@@ -101,6 +101,6 @@ Congratulations on making it this far!
 We hope the code is useful and easy to follow. Contact us for any questions or sugestions:   
 <br>
 :e-mail: Marta Acácio - marta.acacio@gmail.com  
-:e-mail: Gideon Vaadia -   
+:e-mail: Gideon Vaadia - gideonvaadia@gmail.com   
 :e-mail: Orr Spiegel - orrspiegel@tauex.tau.ac.il  
 <br><br>
