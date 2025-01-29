@@ -1,0 +1,377 @@
+---
+title: "Using an existing classification model"
+author: "Vaadia et al"
+output:
+  html_document: default
+  pdf_document: default
+editor: visual
+---
+
+::: callout-tip
+This script will help you using an existing random forest model to classify unobserved behaviors, following the workflow described in Vaadia et al (Figure 2). This script uses example ACC data of unobserved behaviors and the final behavioral classification model created for Griffon Vultures. If you are classifying vulture behavior, you can use our published model. If you are using your own classification model, you will need to upload your own model.
+
+***Important!***
+
+-   Read the instructions before running each chunk to adjust the script to your own dataset.
+:::
+
+## Set up the R session
+
+```{r setup, warning = FALSE, message = FALSE}
+
+library(tidyverse)
+library(moments)
+library(tidymodels)
+library(ranger)
+library(parsnip)
+library(caret)
+library(zoo)
+
+# Load required functions
+source("functions.R")
+
+```
+
+## A - Set parameters
+
+In this section, you will set the parameters needed to run the remaining code: the ACC frequency (in Hz), the bout duration (in seconds), the type of "bout identification" used by your device, and the type of random forest model you will be using (if your own or the griffon vulture model).
+
+To identify the bouts (`bout_type`), there are a few possible scenarios: 1) the device indicates the start of an ACC bout (`device` - and you also need to identify the column and variables that identify the start of the bout); 2) the ACC is sampling every X minutes, so you can use the time difference between measurements to identify when a new bout started (`time_diff` - and you need to set the `time_threshold`); 3) the ACC is sampling continuously, in which case you can split the continuous data into bouts of X measurements (`cont`). Here, you select the type relevant for your data.
+
+In our case (i.e., Ornitela GPS-ACC devices), the device identifies the start of a new bout in the column `datatype`, indicated by the variable `SEN_ACC_20Hz_START`.
+
+```{r set_parameters}
+# Set here the parameters required to run the remaining code
+
+# ----- Bout identification -----
+# The options are: "device" (if the ACC device identifies the start of the bout), "time_diff" (if the ACC is sampled every X minutes), and "cont" (if the device is sampling continously)
+
+# In our example, we set it to "device", but the code for "time_diff" and "cont" is also provided
+bout_type <- set_bout_type("device") 
+
+
+# Set additional parameters:
+if(bout_type == "device"){
+  
+  column_bout_id <- "datatype" # what is the column name that identifies the start of the bout and end of a bout?
+  start_bout_id <- "SEN_ACC_20Hz_START" # what is the variable that identifies the start of the bout?
+  
+}
+
+if(bout_type == "time_diff"){
+  
+  time_threshold <- 300 # set here the time difference expected (in seconds)
+
+  }
+
+# ---- ACC Frequency and Bout duration ----- 
+bout_duration <- 5 # add here your relevant bout duration, in seconds
+acc_frequency <- 20 # add here the frequency of ACC collection, in Hz
+
+
+# ---- Type of random forest ----
+# If you are using your own model, type "own_model". If you are using the griffon vulture model, type "griffon_model"
+
+rf_model <- set_rf_model("griffon_model")
+
+```
+
+### 14 - Upload unobserved data (ACC only)
+
+::: callout-tip
+#### ***Important!***
+
+-   If you want to **use your own** **unobserved ACC data**, replace the files inside the folder "Data/Unobserved_Data/" with your own ACC data.
+:::
+
+```{r uploading_data}
+# Uploading the unobserved raw ACC data
+unobs_raw_acc <- list.files(path = "Data/Unobserved_ACC_data/", 
+                            pattern = "*.csv", full.names = T) %>%
+  map_df(~read.csv(.)) %>%
+  
+  mutate(UTC_datetime = as.POSIXct(UTC_datetime, 
+                                   format = c("%Y-%m-%d %H:%M:%S"), 
+                                   tz = "UTC"))
+# If relevant, remove any rows that do not contain ACC data (for example, rows that have only GPS data)
+unobs_raw_acc <- subset(unobs_raw_acc, !(datatype %in% c("GPS", "GPSS")))
+
+
+```
+
+## B - Pre-processing sequence
+
+### 3 - Transform the raw ACC into acceleration values
+
+Each device was calibrated before deployment by measuring the acceleration in all six possible orientations: positive X, negative X, positive Y, negative Y, positive Z, negative Z. We calculated a slope (`slope`) and intercept (`int`) for each axis, representing a device-specific instrument error. Using these values, we can calibrate each device and transform the raw ACC into acceleration values.
+
+For devices without specific error values, we used the average error across all measured devices.
+
+::: callout-tip
+#### ***Important!***
+
+-   You need to replace the file "example_calibration.csv" with your own tag calibration file!
+:::
+
+```{r calibrating_acc}
+# Add calibration file 
+calibration <- list.files(path = "Data/Calibration_data/", 
+                            pattern = "*.csv", full.names = T) %>%
+  map_df(~read.csv(.)) 
+
+unobs_raw_acc <- left_join(unobs_raw_acc, calibration, by = "device_id")
+
+# If there are no calibration values of a tag, add the mean value for all tags
+unobs_raw_acc <- unobs_raw_acc %>% 
+  mutate(slopex = ifelse(is.na(slopex), mean(calibration$slopex), slopex),
+         intx = ifelse(is.na(intx), mean(calibration$intx), intx),
+         slopey = ifelse(is.na(slopey), mean(calibration$slopey), slopey),
+         inty = ifelse(is.na(inty), mean(calibration$inty), inty),
+         slopez = ifelse(is.na(slopez), mean(calibration$slopez), slopez),
+         intz = ifelse(is.na(intz), mean(calibration$intz), intz))
+
+# Transform raw ACC data into acceleration values
+unobs_raw_acc <- unobs_raw_acc %>%
+  mutate(acc_x = (acc_x - intx) * slopex,
+         acc_y = (acc_y - inty) * slopey,
+         acc_z = (acc_z - intz) * slopez) %>%
+    dplyr::select(-c(intx:slopez))
+
+```
+
+### 4 - Identify distinct bouts
+
+To identify the bouts, there are a few possible scenarios: 1) the device indicates the start of an ACC bout; 2) the ACC is sampling every X minutes, so you can use the time difference between measurements to identify when a new bout started; 3) the ACC is sampling continuously, in which case you can split the continuous data into bouts of X measurements.
+
+In our case (i.e., Ornitela devices), the device identifies the start of a new bout in the column `datatype`, indicated by the variable `SEN_ACC_20Hz_START`. We provide example code for the other two scenarios.
+
+::: callout-tip
+#### ***Important!***
+
+-   Remember to set these parameters in section 14!
+:::
+
+```{r identify_bouts}
+
+if(bout_type == "device"){
+  
+  bout_id <- numeric(nrow(unobs_raw_acc))
+  j = 0
+
+  for(i in 1:nrow(unobs_raw_acc)) {
+    if(unobs_raw_acc[[column_bout_id]][i] == start_bout_id) { # these parameters need to be set in section A.i
+      j = j + 1
+      }
+    bout_id[i] = j
+  }
+
+  unobs_raw_acc <- unobs_raw_acc %>% 
+    add_column(bout_id, .before = 1)
+}
+
+
+if(bout_type == "time_diff"){
+  
+  unobs_raw_acc <- unobs_raw_acc %>%
+    group_by(device_id) %>%
+    arrange(UTC_datetime) %>%
+    mutate(time_diff = as.numeric(difftime(UTC_datetime,
+                                           lag(UTC_datetime),
+                                           units = "sec"))) %>%
+    ungroup() %>%
+    mutate(bout_id = cumsum(ifelse(is.na(time_diff) | time_diff >= time_threshold,
+                                   1, 0)))
+
+}
+
+if(bout_type == "cont"){
+  
+  bout_length <- bout_duration * acc_frequency
+  
+  unobs_raw_acc <- unobs_raw_acc %>%
+    group_by(device_id) %>%
+    arrange(UTC_datetime) %>%
+    mutate(time_diff = as.numeric(difftime(UTC_datetime,
+                                           lag(UTC_datetime),
+                                           units = "sec")),
+           temp_bout_id = (row_number() - 1) %/% bout_length + 1) %>%
+    ungroup() %>%
+    # creates a continuous bout id across the whole dataset, based on the cumulative sum of the changes in the temporary bout id
+  
+    mutate(bout_id = cumsum(temp_bout_id != lag(temp_bout_id, default = 0))) %>%
+    dplyr::select(-temp_bout_id)
+
+    # Making sure that the bouts have continuous data and no gaps (not relevant for the example dataset that had distinct bouts every 300 secs)
+
+  unobs_raw_acc %>%
+    group_by(bout_id) %>%
+    filter(max(time_diff) > 1)
+
+}
+
+
+```
+
+### 5 - Exclude incomplete ACC bouts
+
+The bout length is a product of the bout duration (in seconds) and the ACC frequency (in Hz). In the example dataset, the ACC was collected at 20Hz for 5sec, so we expect each bout to have 100 rows.
+
+```{r exclude_incomplete_bouts}
+
+bout_length <- bout_duration * acc_frequency
+
+unobs_raw_acc <- unobs_raw_acc %>%
+  add_count(bout_id) %>%
+  filter(n == bout_length) %>%
+  dplyr::select(-n)
+
+```
+
+### 6 - Extract statistical features for each bout
+
+Here we provide a list of statistical features to describe each bout, that are described in Supplementary Table S1. Other features can be added to this function.
+
+```{r extract_stat_features}
+stat_feats <- unobs_raw_acc %>%
+    group_by(device_id, bout_id) %>%
+    summarise(mean_x = mean(acc_x),
+              mean_y = mean(acc_y),
+              mean_z = mean(acc_z),
+              range_x = max(acc_x)-min(acc_x),
+              range_y = max(acc_y)-min(acc_y),
+              range_z = max(acc_z)-min(acc_z),
+              sd_x = sd(acc_x),
+              sd_y = sd(acc_y),
+              sd_z = sd(acc_z),
+              skewness_x = skewness(acc_x),
+              skewness_y = skewness(acc_y),
+              skewness_z = skewness(acc_z),
+              kurtosis_x = kurtosis(acc_x),
+              kurtosis_y = kurtosis(acc_y),
+              kurtosis_z = kurtosis(acc_z),
+              max_x = max(acc_x),
+              max_y = max(acc_y),
+              max_z = max(acc_z),
+              min_x = min(acc_x),
+              min_y = min(acc_y),
+              min_z = min(acc_z),
+              norm_x = sqrt(sum(acc_x^2)),
+              norm_y = sqrt(sum(acc_y^2)),
+              norm_z = sqrt(sum(acc_z^2)),
+              q25_x = quantile(acc_x, probs = 0.25),
+              q25_y = quantile(acc_y, probs = 0.25),
+              q25_z = quantile(acc_z, probs = 0.25),
+              q50_x = quantile(acc_x, probs = 0.50),
+              q50_y = quantile(acc_y, probs = 0.50),
+              q50_z = quantile(acc_z, probs = 0.50),
+              q75_x = quantile(acc_x, probs = 0.75),
+              q75_y = quantile(acc_y, probs = 0.75),
+              q75_z = quantile(acc_z, probs = 0.75),
+              cov_x_y = cov(acc_x, acc_y),
+              cov_x_z = cov(acc_x, acc_z), 
+              cov_y_z = cov(acc_y, acc_z),
+              cor_x_y = cor(acc_x, acc_y),
+              cor_x_z = cor(acc_x, acc_z),
+              cor_y_z = cor(acc_y, acc_z),
+              mean_diff_x_y = mean(acc_x-acc_y),
+              mean_diff_x_z = mean(acc_x-acc_z),
+              mean_diff_y_z = mean(acc_y-acc_z),
+              sd_diff_x_y = sd(acc_x-acc_y),
+              sd_diff_x_z = sd(acc_x-acc_z),
+              sd_diff_y_z = sd(acc_y-acc_z),
+              mean_amplitude_x = mean_amplitude(acc_x),
+              mean_amplitude_y = mean_amplitude(acc_y),
+              mean_amplitude_z = mean_amplitude(acc_z)) %>%
+  ungroup()
+
+```
+
+### 6.1 - Prepare the dataset before the model training sequence
+
+The classification model requires a "wide format" dataset, and the current dataset is in "long format". Here, we transform the dataset and add the statistical features.
+
+```{r long_to_wide}
+# Transform from long format to wide format
+full_unobs_data <- unobs_raw_acc %>%
+  add_column(idx = rep(1:bout_length, nrow(unobs_raw_acc)/100)) %>%
+  dplyr::select(bout_id, idx, device_id, acc_x, acc_y, acc_z) %>%
+  pivot_wider(names_from = idx, values_from = c(acc_x, acc_y, acc_z)) 
+
+full_unobs_data <- left_join(full_unobs_data, 
+                       unobs_raw_acc[, c("bout_id", "device_id", "UTC_datetime")],
+                       by = c("device_id", "bout_id"))
+
+full_unobs_data <- left_join(full_unobs_data, 
+                       stat_feats,
+                       by = c("device_id", "bout_id"))
+
+```
+
+## C - Behavioral classification of unobserved data
+
+Here we use the previously built model to classify the behavior of individuals that were not observed.
+
+::: callout-tip
+#### ***Important!***
+
+-   Remember to set the type of model `rf_model` (your own, or griffon vulture) in section 14!
+:::
+
+```{r upload_rf_model}
+
+if(rf_model == "own_model"){
+  
+  my_model_name <- list.files(path = "Data/My_RF_model/", 
+                            pattern = ".rda", full.names = T)
+  
+  unobs_fit <- readRDS(my_model_name)
+
+}
+
+if(rf_model == "griffon_model"){
+  
+  my_model_name <- list.files(path = "Data/Griffon_RF_model/", 
+                            pattern = ".rda", full.names = T)
+  
+  unobs_fit <- readRDS(my_model_name)
+  
+  # fix one variable to match the final model
+  full_unobs_data$start_int <- as.character(full_unobs_data$UTC_datetime)
+  
+}
+
+
+```
+
+### 15 - Apply the model to the unobserved dataset
+
+```{r run_model_unobserved}
+
+# Predict the behaviors
+predictions <-  predict(unobs_fit, full_unobs_data)
+
+```
+
+### 16 - Generate a dataset of behaviorally annotated ACC bouts
+
+```{r behavioral_annotated_df}
+
+# Add the predictions to the main dataframe
+full_unobs_data <- cbind(full_unobs_data, predictions)
+
+```
+
+## D - Confidence Scores
+
+In this section, you will calculate the confidence score for each behavioral classification. This score varies between 0 (no confidence) and 1 (highest confidence). The confidence score is the level of consensus amongst the different decision trees within the random forest (i.e., the proportion of trees that agree on the highest scoring prediction). For example, if the model classifies a bout as ‘Feeding’ with a confidence score of 0.7, 70% of the trees agreed on that classification.
+
+```{r confidence_score}
+# Calculate a confidence score for each prediction
+full_scores <- predict(unobs_fit, full_unobs_data, type = 'prob')
+
+# Now you have a dataframe with the confidence score for each of the possible behaviors. You can either keep all of these scores, or select only the highest score for each classification. 
+full_unobs_data <-  full_unobs_data %>%
+  add_column(score = apply(full_scores, MARGIN = 1, FUN = max), 
+             .before = 'device_id')
+
+```
