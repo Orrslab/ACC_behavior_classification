@@ -1,0 +1,38 @@
+#####################################
+### Load all necessary functions ###
+####################################
+
+# ----- 1 - Function to calculate mean amplitude of each bout ------
+mean_amplitude <- function(x) {
+  extreme_points <- which(abs(diff(sign(diff(x)))) == 2) + 1 
+  mean(abs(x[extreme_points[-1]] - x[extreme_points[-length(extreme_points)]]))
+}
+
+# ----- 2 - Function to set the type of bout ----
+set_bout_type <- function(value) {
+  # Define valid options
+  valid_options <- c("device", "time_diff", "cont")
+  
+  # Check if the input value is valid
+  if (!value %in% valid_options) {
+    stop(glue::glue("Invalid 'bout_type'. Must be one of: {paste(valid_options, collapse = ', ')}"))
+  }
+  
+  # Assign the validated value
+  value
+}
+
+# ---- 3 - Function to set the type of random forest model -----
+set_rf_model <- function(value) {
+  # Define valid options
+  valid_models <- c("own_model", "griffon_model")
+  
+  # Check if the input value is valid
+  if (!value %in% valid_models) {
+    stop(glue::glue("Invalid 'bout_type'. Must be one of: {paste(valid_models, collapse = ', ')}"))
+  }
+  
+  # Assign the validated value
+  value
+}
+
