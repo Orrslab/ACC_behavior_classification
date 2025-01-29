@@ -1,5 +1,5 @@
 # :house_with_garden: Introduction
-This template enables you to build or use a random forest algorithm to predict the behavior of wild animals based on acceleration data (ACC). It is based on the publication Vaadia et al.  
+This template enables you to build or use a random forest algorithm to predict the behavior of wild animals based on acceleration data (ACC). It is based on the publication Vaadia et al. submit.   
 The template includes:  
 - Two R scripts, to build a random forest model and/or use an existing random forest model;
 - example datasets;
