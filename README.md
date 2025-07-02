@@ -32,7 +32,7 @@ The training dataset contains 5783 ACC bouts, matched to six different behaviora
 
 # :open_file_folder: Get started
 ## Create your own project
-1 - Click [*here*](https://tauex-my.sharepoint.com/:u:/g/personal/martaoc_tauex_tau_ac_il/ETdtQt2a1qpKip8-lSrUBdcB6KEOiedubzwrjrZ9E1O3vg?e=wk3lhx) to download the repository directly  
+1 - Click [*here*](https://e.pcloud.link/publink/show?code=XZjHW6ZrjIaLaGfriu9CDfdT0SHGHFB1Rpy) to download the repository directly  
 2 - Unzip and rename the folder with your project name
 
 ## Are you building your own model or using an existing one?
