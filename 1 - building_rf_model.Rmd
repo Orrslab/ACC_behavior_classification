@@ -378,7 +378,7 @@ rf_mod <- rand_forest(mtry = 10, min_n = 11, trees = 1000) %>%
 # Set the recipe for the RF model
 rf_recipe <- 
   recipe(observed_beh ~ ., data = train_data) %>% 
-  step_rm(device_id, starts_with("acc_"))
+  step_rm(device_id, harness, starts_with("acc_"))
 
 # Train the RF model using the "training subset"
 training_fit <- workflow() %>%
@@ -397,7 +397,7 @@ Now we test the model, using the "test subset" of the data. We also calculate th
 predictions <-  predict(training_fit, test_data)
 
 # Calculate a confidence score for each prediction
-scores <- predict(training_fit, test_data, type='prob')
+scores <- predict(training_fit, test_data, type = 'prob')
 
 
 ```
